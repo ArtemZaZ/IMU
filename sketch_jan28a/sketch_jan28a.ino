@@ -1,6 +1,7 @@
 #include <Wire.h>
 #include <stdint.h>
 #define PI 3.14159265358979f
+#define G  9.80665f
 #define GYROMEASERROR PI*(5.f/180.f)
 #define BETA 1.5f*sqrt(3.f/4.f)*GYROMEASERROR
 #define ACSADRESS   0x53
@@ -197,6 +198,8 @@ Quaternion quatRotationPitch;
 Quaternion quatRotationRoll;
 Quaternion quatRotation;
 Quaternion aGlobal;
+Quaternion VGlobal = {0.f, 0.f, 0.f, 0.f};
+Quaternion SGlobal = {0.f, 0.f, 0.f, 0.f};
 
 void loop() 
 {
@@ -213,20 +216,26 @@ void loop()
   ay = acselData[1] / 128.0;
   az = acselData[2] / 128.0; 
 
-  q = updateFilterIterator(q, (Vector){ax, ay, az}, (Vector){wx, wy, wz}, 0.01f);
+  q = updateFilterIterator(q, (Vector){ax, ay, az}, (Vector){wx, wy, wz}, 0.013f);
   Vector temp = quatToEulerAngle(q);
   quatRotationYaw = {cos(temp.x/2), 0.f, 0.f, sin(temp.x/2)};
   quatRotationPitch = {cos(temp.y/2), 0.f, sin(temp.y/2), 0.f};
-  quatRotationRoll = {cos(temp.z/2), sin(temp.z/2), 0.f, 0.f};
-  //quatRotation = mul(quatRotationRoll, mul(quatRotationPitch, quatRotationYaw));
-  quatRotation = mul(quatRotationRoll, quatRotationYaw);
+  quatRotationRoll = {cos(temp.z/2), -sin(temp.z/2), 0.f, 0.f};
+  quatRotation = mul(quatRotationRoll, mul(quatRotationPitch, quatRotationYaw));
+  //quatRotation = mul(quatRotationRoll, quatRotationYaw);
 
   aGlobal = mul(inverse(quatRotation), mul((Quaternion){0.f, ax, ay, az}, quatRotation));
+  aGlobal = (Quaternion){0.f, aGlobal.x, aGlobal.y, aGlobal.z - 1.f};
+  SGlobal = summ(summ(SGlobal, scale(VGlobal, 0.013f)), scale(aGlobal, G*0.0000845f));
+  VGlobal = summ(VGlobal, scale(aGlobal, G*0.013f));
+  
   //Serial.print("\n yaw=");
   //Serial.print( temp.x );
   //Serial.print("\n pitch=");
   //Serial.println( 180*temp.z/PI );
-  Serial.println( aGlobal.x );
+  //Serial.println( aGlobal.z - 1.0 );
+  Serial.println( aGlobal.x);
+  //Serial.println( aGlobal.y);
   //Serial.print("\n roll=");
   //Serial.print( temp.z );
   delay(10);
