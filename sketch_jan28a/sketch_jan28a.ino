@@ -3,7 +3,7 @@
 #define PI 3.14159265358979f
 #define G  9.80665f
 #define GYROMEASERROR PI*(5.f/180.f)
-#define BETA 1.5f*sqrt(3.f/4.f)*GYROMEASERROR
+#define BETA sqrt(3.f/4.f)*GYROMEASERROR
 #define ACSADRESS   0x53
 #define A_POWER_CTL 0x2D  //Power Control Register
 #define A_DATA_FORMAT   0x31
@@ -183,7 +183,32 @@ void getAcselData(int32_t* result)
   result[2] = (int32_t)((buff[5] << 8) | buff[4]);  
 }
 
+void HPFilterIterator(Quaternion inValue, Quaternion oldInValue, Quaternion* outValue, float deltaT, float RC)
+{
+  float a = RC/(RC + deltaT);
+  outValue -> w = (a*(outValue -> w)  + a*(inValue.w - oldInValue.w));
+  outValue -> x = (a*(outValue -> x)  + a*(inValue.x - oldInValue.x));
+  outValue -> y = (a*(outValue -> y)  + a*(inValue.y - oldInValue.y));
+  outValue -> z = (a*(outValue -> z)  + a*(inValue.z - oldInValue.z));
+}
 
+void LPFilterIterator(Quaternion inValue, Quaternion* outValue, float Kp)
+{
+  outValue -> w = (Kp - 1)*(outValue -> w) + Kp*inValue.w;
+  outValue -> x = (Kp - 1)*(outValue -> x) + Kp*inValue.x;
+  outValue -> y = (Kp - 1)*(outValue -> y) + Kp*inValue.y;
+  outValue -> z = (Kp - 1)*(outValue -> z) + Kp*inValue.z;
+}
+/*
+void HPFilterIteratorWithGain(Quaternion inValue, Quaternion oldInValue, Quaternion* outValue, float deltaT, float RC)
+{
+  float a = RC;
+  outValue -> w = a*(outValue -> w)  + (inValue.w/1.7f - oldInValue.w);
+  outValue -> x = a*(outValue -> x)  + (inValue.x/1.7f - oldInValue.x);
+  outValue -> y = a*(outValue -> y)  + (inValue.y/1.7f - oldInValue.y);
+  outValue -> z = a*(outValue -> z)  + (inValue.z/1.7f - oldInValue.z);
+}
+*/
 void setup() 
 {
   Serial.begin(9600);
@@ -197,9 +222,15 @@ Quaternion quatRotationYaw;
 Quaternion quatRotationPitch;
 Quaternion quatRotationRoll;
 Quaternion quatRotation;
-Quaternion aGlobal;
+Quaternion aGlobal = {0.f, 0.f, 0.f, 0.f};
+Quaternion aGlobalOld = {0.f, 0.f, 0.f, 0.f};
+Quaternion aTEMP = {0.f, 0.f, 0.f, 0.f};
+
 Quaternion VGlobal = {0.f, 0.f, 0.f, 0.f};
 Quaternion SGlobal = {0.f, 0.f, 0.f, 0.f};
+
+float RC = 0.90f;
+float Kp = 0.8f;
 
 void loop() 
 {
@@ -220,21 +251,28 @@ void loop()
   Vector temp = quatToEulerAngle(q);
   quatRotationYaw = {cos(temp.x/2), 0.f, 0.f, sin(temp.x/2)};
   quatRotationPitch = {cos(temp.y/2), 0.f, sin(temp.y/2), 0.f};
-  quatRotationRoll = {cos(temp.z/2), -sin(temp.z/2), 0.f, 0.f};
+  quatRotationRoll = {cos(temp.z/2), sin(temp.z/2), 0.f, 0.f};
   quatRotation = mul(quatRotationRoll, mul(quatRotationPitch, quatRotationYaw));
   //quatRotation = mul(quatRotationRoll, quatRotationYaw);
 
   aGlobal = mul(inverse(quatRotation), mul((Quaternion){0.f, ax, ay, az}, quatRotation));
-  aGlobal = (Quaternion){0.f, aGlobal.x, aGlobal.y, aGlobal.z - 1.f};
-  SGlobal = summ(summ(SGlobal, scale(VGlobal, 0.013f)), scale(aGlobal, G*0.0000845f));
-  VGlobal = summ(VGlobal, scale(aGlobal, G*0.013f));
+  aGlobal = scale((Quaternion){0.f, aGlobal.x, aGlobal.y, aGlobal.z - 1.f}, G);
+  
+  HPFilterIterator(aGlobal, aGlobalOld, &aTEMP, 0.015f, RC);
+  aGlobalOld = aGlobal;
+  aGlobal = aTEMP;  
+  LPFilterIterator(aGlobal, &aTEMP, Kp);
+  aGlobal = aTEMP;
+  
+  SGlobal = summ(summ(SGlobal, scale(VGlobal, 0.013f)), scale(aGlobal, 0.0000845f));
+  VGlobal = summ(VGlobal, scale(aGlobal, 0.013f));
   
   //Serial.print("\n yaw=");
   //Serial.print( temp.x );
   //Serial.print("\n pitch=");
   //Serial.println( 180*temp.z/PI );
   //Serial.println( aGlobal.z - 1.0 );
-  Serial.println( aGlobal.x);
+  Serial.println( VGlobal.y);
   //Serial.println( aGlobal.y);
   //Serial.print("\n roll=");
   //Serial.print( temp.z );
